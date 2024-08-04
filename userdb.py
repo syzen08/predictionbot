@@ -38,8 +38,28 @@ class UserDB():
             self.logger.debug('guild {guild.id} ({guild.name}) already exists')
             return -1
 
-    def addUser(self, guild: discord.Guild, member: discord.Member):
+    def addMember(self, guild: discord.Guild, member: discord.Member):
         if member not in self.db[str(guild.id)]:
             self.db[str(guild.id)][member.id] = {'points': 500}
             self.logger.info(f'created new member {member.id} ({member.display_name}) in guild {guild.id} ({guild.name}) in db')
             self.saveDb()
+
+    def getMemberPoints(self, guild: discord.Guild, member: discord.Member):
+        return self.db[str(guild.id)][str(member.id)]['points']
+    
+    def setMemberPoints(self, guild: discord.Guild, member: discord.Member, points: int):
+        self.db[str(guild.id)][str(member.id)]['points'] = points
+        self.logger.debug(f'set {member.id} ({member.display_name}) points to {points}')
+        self.saveDb()
+
+    def addPoints(self, guild: discord.Guild, member: discord.Member, points: int):
+        self.db[str(guild.id)][str(member.id)]['points'] += points
+        self.logger.debug(f'added {points} points to {member.id} ({member.display_name}). current points: {self.db[str(guild.id)][member.id]['points']}')
+        self.saveDb()
+
+    def removePoints(self, guild: discord.Guild, member: discord.Member, points: int):
+        self.db[str(guild.id)][str(member.id)]['points'] -= points
+        if points < 0:
+            points = 0
+        self.logger.debug(f'removed {points} points from {member.id} ({member.display_name}). current points: {self.db[str(guild.id)][member.id]['points']}')
+        self.saveDb()

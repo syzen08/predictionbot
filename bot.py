@@ -2,8 +2,8 @@ import logging
 
 import discord
 from discord.ext import commands
-from discord.utils import MISSING
 
+from embeds import getErrorEmbed, getInformationEmbed, getSuccessEmbed
 from prediction import Prediction
 from userdb import UserDB
 
@@ -15,36 +15,68 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
-current_predictions = []
+current_predictions: list[Prediction] = []
 
 bot = commands.Bot(command_prefix='$', intents=intents)
 
-class PredictionSubmitModal(discord.ui.Modal, title='Vorhersage'):
-    amount = discord.ui.TextInput(label='Wie viel willst du wetten?', placeholder='100', required=True, style=discord.TextStyle.short, max_length=6)
+class PredictionSubmitModal(discord.ui.Modal, title='Wie viel Euro willst du wetten?'):
+    amount = discord.ui.TextInput(label='! Du kannst nur ein mal wetten !', placeholder='z.B. 100', required=True, style=discord.TextStyle.short, max_length=6)
 
-    def __init__(self, currentpredictionsidx: int, option: int, *, title: str = ..., timeout: float | None = None, custom_id: str = ...) -> None:
-        super().__init__(title=title, timeout=timeout, custom_id=custom_id)
+    def __init__(self, currentpredictionsidx: int, option: int, *,  timeout: float | None = None) -> None:
+        super().__init__(title=discord.utils.MISSING, timeout=timeout, custom_id=discord.utils.MISSING)
         self.currpredidx = currentpredictionsidx
         self.option = option
 
     async def on_submit(self, interaction: discord.Interaction):
-        current_predictions[self.currpredidx].addVote(interaction.user, int(self.amount.value))
-        await interaction.response.send_message(f'du hast mit {self.amount.value} Euro fuer {current_predictions[self.currpredidx].getOptionName(self.option)}', ephemeral=True)
+        try:
+            amount = int(self.amount.value)
+        except ValueError:
+            logger.warning(f'{interaction.user.display_name} tried to submit a non-integer value ({self.amount.value})')
+            await interaction.response.send_message(embed=getErrorEmbed("Bitte gib nur Zahlen ein!"), ephemeral=True)
+            return
+
+        if not userdb.removePoints(interaction.guild, interaction.user, amount):
+            logger.warning(f'{interaction.user.display_name} tried to submit more points ({amount}) than they have ({userdb.getMemberPoints(interaction.guild, interaction.user)})')
+            await interaction.response.send_message(embed=getErrorEmbed(f"Du hast nicht genug Geld! \nDein aktueller Kontostand betraegt **{userdb.getMemberPoints(interaction.guild, interaction.user)} Euro** "), ephemeral=True)
+            return
+
+        current_predictions[self.currpredidx].addVote(interaction.user, self.option, amount)
+        logger.info(f'{interaction.user.display_name} predicted option {self.option} with {amount} points')
+        await interaction.response.send_message(embed=getSuccessEmbed(f'Du hast mit **{amount} Euro** fuer **{current_predictions[self.currpredidx].getOptionName(self.option)}** gestimmt!'), ephemeral=True)
+        predictionembed = discord.Embed()
+        predictionembed.title = current_predictions[self.currpredidx].name
+
+        predictionembed.add_field(name=f"{current_predictions[self.currpredidx].option1} | {current_predictions[self.currpredidx].getPercentage(1)}%", value=f"{current_predictions[self.currpredidx].option1_amout} Euro")
+        predictionembed.add_field(name=f"{current_predictions[self.currpredidx].option2} | {current_predictions[self.currpredidx].getPercentage(2)}%", value=f"{current_predictions[self.currpredidx].option2_amout} Euro")
+        predictionembed.color = discord.Color.purple()
+
+        await interaction.message.edit(embed=predictionembed)
+
 
 class PredictionView(discord.ui.View):
     def __init__(self, predictionidx: int):
-        super().__init__()
+        super().__init__(timeout=None)
         self.value = None
         self.predidx = predictionidx
 
     @discord.ui.button(label='Option 1', style=discord.ButtonStyle.green)
     async def option1(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(PredictionSubmitModal(self.predidx, 1))
+        if not await self.validateIfUserVoted(interaction, interaction.user):
+            await interaction.response.send_modal(PredictionSubmitModal(self.predidx, 1))
+            logger.info(f'{interaction.user.display_name} selected option 1')
 
     @discord.ui.button(label='Option 2', style=discord.ButtonStyle.red)
     async def option2(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(PredictionSubmitModal(self.predidx, 2))
+        if not await self.validateIfUserVoted(interaction, interaction.user):
+            await interaction.response.send_modal(PredictionSubmitModal(self.predidx, 2))
+            logger.info(f'{interaction.user.display_name} selected option 2')
         
+    async def validateIfUserVoted(self, interaction: discord.Interaction, user: discord.Member) -> bool:
+        if user.id in current_predictions[self.predidx].all_voters:
+            await interaction.response.send_message(embed=getErrorEmbed('Du hast bereits abgestimmt!'), ephemeral=True)
+            return True
+        else:
+            return False
 
 @bot.event
 async def on_ready():
@@ -71,28 +103,38 @@ async def echo(interaction: discord.Interaction, message):
     await interaction.reply(message)
 
 @bot.hybrid_command(name='kontostand', description='zeigt den kontostand von jemanden an')
-async def getPoints(interaction: discord.Interaction, member: discord.Member):
-    points = userdb.getMemberPoints(interaction.guild, member)
-    await interaction.reply(f'{member.display_name} hat {points} Euro')
+async def getPoints(ctx, member: discord.Member):
+    points = userdb.getMemberPoints(ctx.guild, member)
+    await ctx.reply(embed=getInformationEmbed(f"{member.display_name}'s Kontostand", f"*{member.display_name}* hat **{points} Euro**"))
+    logger.info(f'{ctx.author.display_name} requested points of {member.display_name}')
 
 @bot.hybrid_command(name='vorhersage', description='starte eine neue vorhersage')
-async def startPrediction(interaction: discord.Interaction, title: str, option1: str, option2: str):
-    current_predictions.append(Prediction(title, option1, option2))
-    interaction.response.send_message(embed=discord.Embed(), view=PredictionView(current_predictions.index(Prediction(title, option1, option2))))
-
+async def startPrediction(ctx, title: str, option1: str, option2: str):
+    prediction = Prediction(title, option1, option2)
+    current_predictions.append(prediction)
+    logger.info(f'{ctx.author.display_name} started prediction: {prediction.name}: {prediction.option1} | {prediction.option2}')
+    predictionembed = discord.Embed()
+    predictionembed.title = title
+    predictionembed.add_field(name=f"{option1} | 0%", value="0 Euro")
+    predictionembed.add_field(name=f"{option2} | 0%", value="0 Euro")
+    predictionembed.color = discord.Color.purple()
+    await ctx.send(embed=predictionembed, view=PredictionView(current_predictions.index(prediction)))
 
 @bot.command()
 async def setPoints(ctx, member: discord.Member, points: int):
     if ctx.author.id == 533275317276770324:
         userdb.setMemberPoints(ctx.guild, member, points)
-        await ctx.send(f'set {member.display_name} points to {points}')
+        await ctx.send(embed=getSuccessEmbed(f'set {member.display_name} points to {points}'))
+        logger.info(f'{ctx.author.display_name} set {member.display_name} points to {points}')
     else:
-        await ctx.send('you are not allowed to use this command')
+        await ctx.send(embed=getErrorEmbed('Du hast nicht die Berechtigung, diesen Befehl auszufuehren!'))
+        logger.info(f'{ctx.author.display_name} tried to use the setPoints command')
 
 @bot.command()
 async def manualInitialisation(ctx):
+    logger.info('manual guild initialisation')
     initGuild(ctx.guild)
-    await ctx.send('initialised all guilds')
+    await ctx.send(embed=getSuccessEmbed('initialised guild'))
 
 def initGuild(guild: discord.Guild):
     result = userdb.addGuild(guild)

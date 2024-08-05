@@ -57,9 +57,11 @@ class UserDB():
         self.logger.debug(f'added {points} points to {member.id} ({member.display_name}). current points: {self.db[str(guild.id)][member.id]['points']}')
         self.saveDb()
 
-    def removePoints(self, guild: discord.Guild, member: discord.Member, points: int):
-        self.db[str(guild.id)][str(member.id)]['points'] -= points
-        if points < 0:
-            points = 0
-        self.logger.debug(f'removed {points} points from {member.id} ({member.display_name}). current points: {self.db[str(guild.id)][member.id]['points']}')
+    def removePoints(self, guild: discord.Guild, member: discord.Member, points: int) -> bool:
+        newpoints = self.db[str(guild.id)][str(member.id)]['points'] - points
+        if newpoints < 0:
+            return False
+        self.db[str(guild.id)][str(member.id)]['points'] = newpoints
+        self.logger.debug(f'removed {points} points from {member.id} ({member.display_name}). current points: {self.db[str(guild.id)][str(member.id)]['points']}')
         self.saveDb()
+        return True

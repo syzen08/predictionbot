@@ -1,6 +1,5 @@
 import json
 import logging
-import os
 from pathlib import Path
 
 import discord
@@ -54,7 +53,7 @@ class UserDB():
 
     def addPoints(self, guild: discord.Guild, member: discord.Member, points: int):
         self.db[str(guild.id)][str(member.id)]['points'] += points
-        self.logger.debug(f'added {points} points to {member.id} ({member.display_name}). current points: {self.db[str(guild.id)][member.id]['points']}')
+        self.logger.debug(f'added {points} points to {member.id} ({member.display_name}). current points: {self.db[str(guild.id)][str(member.id)]['points']}')
         self.saveDb()
 
     def removePoints(self, guild: discord.Guild, member: discord.Member, points: int) -> bool:

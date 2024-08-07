@@ -1,7 +1,15 @@
+# TODO: hartz 4 (500)
+# geld geben
+# status aendern   
+# 
+
+
+import datetime
 import logging
 
 import discord
-from discord.ext import commands
+from discord import app_commands
+from discord.ext import commands, tasks
 
 from embeds import getErrorEmbed, getInformationEmbed, getSuccessEmbed
 from prediction import Prediction
@@ -15,68 +23,84 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
-current_predictions: list[Prediction] = []
+current_predictions: dict[Prediction] = {}
 
 bot = commands.Bot(command_prefix='$', intents=intents)
 
 class PredictionSubmitModal(discord.ui.Modal, title='Wie viel Euro willst du wetten?'):
     amount = discord.ui.TextInput(label='! Du kannst nur ein mal wetten !', placeholder='z.B. 100', required=True, style=discord.TextStyle.short, max_length=6)
 
-    def __init__(self, currentpredictionsidx: int, option: int, *,  timeout: float | None = None) -> None:
+    def __init__(self, predictionchannel: discord.TextChannel, option: int, *,  timeout: float | None = None) -> None:
         super().__init__(title=discord.utils.MISSING, timeout=timeout, custom_id=discord.utils.MISSING)
-        self.currpredidx = currentpredictionsidx
+        self.predictionchannel = predictionchannel
         self.option = option
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
             amount = int(self.amount.value)
         except ValueError:
-            logger.warning(f'{interaction.user.display_name} tried to submit a non-integer value ({self.amount.value})')
+            logger.info(f'{interaction.user.display_name} tried to submit a non-integer value ({self.amount.value})')
             await interaction.response.send_message(embed=getErrorEmbed("Bitte gib nur Zahlen ein!"), ephemeral=True)
             return
 
         if not userdb.removePoints(interaction.guild, interaction.user, amount):
-            logger.warning(f'{interaction.user.display_name} tried to submit more points ({amount}) than they have ({userdb.getMemberPoints(interaction.guild, interaction.user)})')
+            logger.info(f'{interaction.user.display_name} tried to submit more points ({amount}) than they have ({userdb.getMemberPoints(interaction.guild, interaction.user)})')
             await interaction.response.send_message(embed=getErrorEmbed(f"Du hast nicht genug Geld! \nDein aktueller Kontostand betraegt **{userdb.getMemberPoints(interaction.guild, interaction.user)} Euro** "), ephemeral=True)
             return
 
-        current_predictions[self.currpredidx].addVote(interaction.user, self.option, amount)
+        current_predictions[self.predictionchannel.id].addVote(interaction.user, self.option, amount)
         logger.info(f'{interaction.user.display_name} predicted option {self.option} with {amount} points')
-        await interaction.response.send_message(embed=getSuccessEmbed(f'Du hast mit **{amount} Euro** fuer **{current_predictions[self.currpredidx].getOptionName(self.option)}** gestimmt!'), ephemeral=True)
-        predictionembed = discord.Embed()
-        predictionembed.title = current_predictions[self.currpredidx].name
+        await interaction.response.send_message(embed=getSuccessEmbed(f'Du hast mit **{amount} Euro** fuer **{current_predictions[self.predictionchannel.id].getOptionName(self.option)}** gestimmt!'), ephemeral=True)
+        predictionembed = current_predictions[self.predictionchannel.id].message.embeds[0]
+        predictionembed.set_field_at(0, name=f"{current_predictions[self.predictionchannel.id].option1} | {current_predictions[self.predictionchannel.id].getPercentage(1)}%", value=f"{current_predictions[self.predictionchannel.id].option1_amout} Euro")
+        predictionembed.set_field_at(1, name=f"{current_predictions[self.predictionchannel.id].option2} | {current_predictions[self.predictionchannel.id].getPercentage(2)}%", value=f"{current_predictions[self.predictionchannel.id].option2_amout} Euro")
 
-        predictionembed.add_field(name=f"{current_predictions[self.currpredidx].option1} | {current_predictions[self.currpredidx].getPercentage(1)}%", value=f"{current_predictions[self.currpredidx].option1_amout} Euro")
-        predictionembed.add_field(name=f"{current_predictions[self.currpredidx].option2} | {current_predictions[self.currpredidx].getPercentage(2)}%", value=f"{current_predictions[self.currpredidx].option2_amout} Euro")
-        predictionembed.color = discord.Color.purple()
-
-        await interaction.message.edit(embed=predictionembed)
+        await current_predictions[self.predictionchannel.id].message.edit(embed=predictionembed)
 
 
 class PredictionView(discord.ui.View):
-    def __init__(self, predictionidx: int):
+    def __init__(self, predictionchannel: discord.TextChannel):
         super().__init__(timeout=None)
         self.value = None
-        self.predidx = predictionidx
+        self.predictionchannel = predictionchannel
+        logger.info(self.children)
 
     @discord.ui.button(label='Option 1', style=discord.ButtonStyle.green)
     async def option1(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self.validateIfUserVoted(interaction, interaction.user):
-            await interaction.response.send_modal(PredictionSubmitModal(self.predidx, 1))
+            await interaction.response.send_modal(PredictionSubmitModal(self.predictionchannel, 1))
             logger.info(f'{interaction.user.display_name} selected option 1')
 
     @discord.ui.button(label='Option 2', style=discord.ButtonStyle.red)
     async def option2(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self.validateIfUserVoted(interaction, interaction.user):
-            await interaction.response.send_modal(PredictionSubmitModal(self.predidx, 2))
+            await interaction.response.send_modal(PredictionSubmitModal(self.predictionchannel, 2))
             logger.info(f'{interaction.user.display_name} selected option 2')
         
     async def validateIfUserVoted(self, interaction: discord.Interaction, user: discord.Member) -> bool:
-        if user.id in current_predictions[self.predidx].all_voters:
+        if user.id in current_predictions[self.predictionchannel.id].all_voters:
             await interaction.response.send_message(embed=getErrorEmbed('Du hast bereits abgestimmt!'), ephemeral=True)
             return True
         else:
             return False
+
+class ClosePredictionView(discord.ui.View):
+    def __init__(self, result: int):
+        super().__init__(timeout=None)
+        self.value = None
+        self.result = result
+
+    @discord.ui.button(label='Ja, schliessen', style=discord.ButtonStyle.danger)
+    async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not current_predictions[interaction.channel.id].open:
+            return
+        await current_predictions[interaction.channel.id].close(interaction.user)
+        logger.info(f'{interaction.user.display_name} closed the prediction {current_predictions[interaction.channel.id].name} in {interaction.channel.name}')
+        await interaction.response.send_message(embed=getSuccessEmbed('Vorhersage wurde geschlossen'), ephemeral=True)
+
+    @discord.ui.button(label='Nein, abbrechen', style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(embed=getSuccessEmbed('Vorhersage wurde nicht geschlossen'), ephemeral=True)
 
 @bot.event
 async def on_ready():
@@ -86,6 +110,9 @@ async def on_ready():
         logger.info(f'synced {len(synced)} command(s)')
     except Exception as e:
         logger.error(f'sync failed: {e}')
+
+    checkPredictions.start()
+    logger.info('started checkPredictions loop')
 
     try:
         await bot.change_presence(status=discord.Status.online, activity=discord.CustomActivity(name="ich sehe alles"))
@@ -103,22 +130,124 @@ async def echo(interaction: discord.Interaction, message):
     await interaction.reply(message)
 
 @bot.hybrid_command(name='kontostand', description='zeigt den kontostand von jemanden an')
+@app_commands.describe(
+    member='Die Person'
+)
+@app_commands.rename(
+    member='person'
+)
 async def getPoints(ctx, member: discord.Member):
     points = userdb.getMemberPoints(ctx.guild, member)
-    await ctx.reply(embed=getInformationEmbed(f"{member.display_name}'s Kontostand", f"*{member.display_name}* hat **{points} Euro**"))
+    await ctx.reply(embed=getInformationEmbed(f"{member.display_name}'s Kontostand", f"*{member.display_name}* hat **{points} Euro**"), ephemeral=True)
     logger.info(f'{ctx.author.display_name} requested points of {member.display_name}')
 
-@bot.hybrid_command(name='vorhersage', description='starte eine neue vorhersage')
-async def startPrediction(ctx, title: str, option1: str, option2: str):
-    prediction = Prediction(title, option1, option2)
-    current_predictions.append(prediction)
-    logger.info(f'{ctx.author.display_name} started prediction: {prediction.name}: {prediction.option1} | {prediction.option2}')
+
+
+@bot.hybrid_group(name='vorhersage', description='starte eine neue vorhersage', fallback='erstellen')
+@app_commands.describe(
+    title='Titel der Vorhersage',
+    option1='Option 1',
+    option2='Option 2',
+    endtime='Dauer der Vorhersage in Sekunden. Bei 0 muss sie mit /vorhersage schliessen geschlossen werdern'
+)
+@app_commands.rename(
+    title='titel', 
+    option1='option_1', 
+    option2='option_2', 
+    endtime='dauer'
+)
+async def startPrediction(ctx, title: str, option1: str, option2: str, endtime: int):
+    # if len(current_predictions.keys()) >=0:
+    #     if current_predictions[ctx.channel.id].result is None:
+    #         await ctx.reply(embed=getErrorEmbed('Es gibt bereits eine laufende Vorhersage in diesem Kanal!'), ephemeral=True)
+    #         return
+
+    if endtime <= 0:
+        end_time = None
+    else:
+        end_time = datetime.datetime.now() + datetime.timedelta(seconds=endtime)
+    logger.info(f'{ctx.author.display_name} started prediction: {title}: {option1} | {option2}')
     predictionembed = discord.Embed()
     predictionembed.title = title
     predictionembed.add_field(name=f"{option1} | 0%", value="0 Euro")
     predictionembed.add_field(name=f"{option2} | 0%", value="0 Euro")
     predictionembed.color = discord.Color.purple()
-    await ctx.send(embed=predictionembed, view=PredictionView(current_predictions.index(prediction)))
+    if end_time is None:
+        predictionembed.set_footer(text='Vorhersage schliesst nicht automatisch')
+    else:
+        predictionembed.set_footer(text=f'Vorhersage schliesst nach {endtime} Sekunden')
+    prediction_message = await ctx.send(embed=predictionembed, view=PredictionView(ctx.channel))
+    prediction = Prediction(title, option1, option2, end_time, ctx.channel, prediction_message)
+    current_predictions[ctx.channel.id] = prediction
+
+@startPrediction.command(name='schliessen', description='schliesst die laufende vorhersage im kanal')
+async def closePrediction(ctx):
+    try:
+        prediction = current_predictions[ctx.channel.id]
+        if prediction.open:
+            await prediction.close(ctx.author)
+            logger.info(f'{ctx.author.display_name} closed the prediction {prediction.name} in {ctx.channel.name}')
+            await ctx.send(embed=getSuccessEmbed(f'Vorhersage `{prediction.name}` geschlossen!'), ephemeral=True)
+        else:
+            logger.info(f'{ctx.author.display_name} tried to close a prediction that is already closed')
+            await ctx.reply(embed=getErrorEmbed('Die Vorhersage ist bereits geschlossen!'), ephemeral=True)
+    except KeyError:
+        logger.info(f'{ctx.author.display_name} tried to close a non-existent prediction')
+        await ctx.reply(embed=getErrorEmbed('Es gibt keine laufende Vorhersage in diesem Kanal!'), ephemeral=True)
+
+@startPrediction.command(name='ergebnis', description='Setzt das Ergebnis der Vorhersage fest und zahlt allen Mitspielern ihren Anteil aus')
+@app_commands.describe(
+    option='Option die gewonnen hat (1 oder 2)'
+)
+async def setPredictionResult(ctx, option: int):
+    if option != 1 and option != 2:
+        await ctx.reply(embed=getErrorEmbed('Es gibt nur 2 Optionen, 1 oder 2. Entscheide dich weise'), ephemeral=True)
+        return
+    try:
+        prediction = current_predictions[ctx.channel.id]
+        if prediction.open:
+            await ctx.send(embed=getErrorEmbed('Die Vorhersage ist nicht geschlossen! Willst du sie jetzt schliessen?'), view=ClosePredictionView(option), ephemeral=True)
+            return
+        else:
+            prediction.setResult(option)
+            totalpoints = prediction.option1_amout + prediction.option2_amout
+            logger.info(f'{ctx.author.display_name} set the result of {prediction.name} to {option}')
+    except KeyError:
+        logger.info(f'{ctx.author.display_name} tried to set the result of a non-existent prediction')
+        await ctx.reply(embed=getErrorEmbed('Es gibt keine laufende Vorhersage in diesem Kanal!'), ephemeral=True)
+        return
+    
+    embed: discord.Embed = prediction.message.embeds[0]
+    embed.set_author(name='Vorhersage vorbei')
+    embed.color = discord.Color.green()
+    embed.set_footer(text=f'Ergebnis von {ctx.author.display_name}')
+
+    match prediction.result:
+        case 1:
+            if len(prediction.option1_voters) == 0:
+                embed.set_field_at(0, name=f"🎉 **{prediction.option1} | {prediction.getPercentage(1)}%**", value=f"{prediction.option1_amout} Euro\nNiemand hat hier gewettet, **{totalpoints} Euro** gehen verloren!")
+                logger.info(f'No one voted for option {prediction.option1}, {totalpoints} Points lost')
+            else:
+                pointshare = round(totalpoints / len(prediction.option1_voters))
+                for member in prediction.option1_voters:
+                    userdb.addPoints(ctx.guild, member, pointshare)
+                embed.set_field_at(0, name=f"🎉 **{prediction.option1} | {prediction.getPercentage(1)}%**", value=f"{prediction.option1_amout} Euro\n**{totalpoints} Euro** werden an {len(prediction.option1_voters)} Mitglieder verteilt")
+                logger.info(f'a price pool of {totalpoints} is split for {len(prediction.option1_voters)} voters, each member gets {pointshare} points')
+        case 2:
+            if len(prediction.option2_voters) == 0:
+                embed.set_field_at(1, name=f"🎉 **{prediction.option2} | {prediction.getPercentage(2)}%**", value=f"{prediction.option2_amout} Euro\nNiemand hat hier gewettet, **{totalpoints} Euro** gehen verloren!")
+                logger.info(f'No one voted for option {prediction.option2}, {totalpoints} Points lost')
+                await prediction.message.edit(embed=embed)
+            else:
+                pointshare = round(totalpoints / len(prediction.option2_voters))
+                for member in prediction.option2_voters:
+                    userdb.addPoints(ctx.guild, member, pointshare)
+                embed.set_field_at(1, name=f"🎉 **{prediction.option1} | {prediction.getPercentage(2)}%**", value=f"{prediction.option2_amout} Euro\n**{totalpoints}** werden an {len(prediction.option2_voters)} Mitglieder verteilt")
+                logger.info(f'a price pool of {totalpoints} is split for {len(prediction.option2_voters)} voters, each member gets {pointshare} points')
+    
+    await prediction.message.edit(embed=embed)
+    await ctx.send(embed=getSuccessEmbed('Ergebnis festgelegt'), ephemeral=True)
+
 
 @bot.command()
 async def setPoints(ctx, member: discord.Member, points: int):
@@ -127,7 +256,7 @@ async def setPoints(ctx, member: discord.Member, points: int):
         await ctx.send(embed=getSuccessEmbed(f'set {member.display_name} points to {points}'))
         logger.info(f'{ctx.author.display_name} set {member.display_name} points to {points}')
     else:
-        await ctx.send(embed=getErrorEmbed('Du hast nicht die Berechtigung, diesen Befehl auszufuehren!'))
+        await ctx.send(embed=getErrorEmbed('Du hast nicht die Berechtigung, diesen Befehl auszufuehren!'), ephemeral=True)
         logger.info(f'{ctx.author.display_name} tried to use the setPoints command')
 
 @bot.command()
@@ -135,6 +264,21 @@ async def manualInitialisation(ctx):
     logger.info('manual guild initialisation')
     initGuild(ctx.guild)
     await ctx.send(embed=getSuccessEmbed('initialised guild'))
+
+@tasks.loop(seconds=5)
+async def checkPredictions():
+    logger.debug('checking predictions')
+    for prediction in current_predictions.values():
+        if not prediction.open:
+            continue
+
+        if prediction.end_time is None:
+            logger.debug(f'prediction {prediction.name} is set to never end')
+            continue
+
+        if prediction.end_time < datetime.datetime.now():
+            await prediction.close()
+            logger.info(f'prediction {prediction.name} has ended and is now closed')
 
 def initGuild(guild: discord.Guild):
     result = userdb.addGuild(guild)

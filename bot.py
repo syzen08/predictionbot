@@ -27,6 +27,10 @@ current_predictions: dict[Prediction] = {}
 
 bot = commands.Bot(command_prefix='$', intents=intents)
 
+###############
+#   CLASSES   #
+###############
+
 class PredictionSubmitModal(discord.ui.Modal, title='Wie viel Euro willst du wetten?'):
     amount = discord.ui.TextInput(label='! Du kannst nur ein mal wetten !', placeholder='z.B. 100', required=True, style=discord.TextStyle.short, max_length=6)
 
@@ -56,7 +60,6 @@ class PredictionSubmitModal(discord.ui.Modal, title='Wie viel Euro willst du wet
         predictionembed.set_field_at(1, name=f"{current_predictions[self.predictionchannel.id].option2} | {current_predictions[self.predictionchannel.id].getPercentage(2)}%", value=f"{current_predictions[self.predictionchannel.id].option2_amout} Euro")
 
         await current_predictions[self.predictionchannel.id].message.edit(embed=predictionembed)
-
 
 class PredictionView(discord.ui.View):
     def __init__(self, predictionchannel: discord.TextChannel):
@@ -102,6 +105,10 @@ class ClosePredictionView(discord.ui.View):
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(embed=getSuccessEmbed('Vorhersage wurde nicht geschlossen'), ephemeral=True)
 
+##############
+#   EVENTS   #
+##############
+
 @bot.event
 async def on_ready():
     logger.info(f'logged in as {bot.user}')
@@ -125,22 +132,25 @@ async def on_guild_join(guild):
     logger.info(f'joined new guild {guild.id} ({guild.name})')
     initGuild(guild)
 
-@bot.hybrid_command(name='echo', description='der bot sagt was du willst')
-async def echo(interaction: discord.Interaction, message):
-    await interaction.reply(message)
 
-@bot.hybrid_command(name='kontostand', description='zeigt den kontostand von jemanden an')
-@app_commands.describe(
-    member='Die Person'
-)
-@app_commands.rename(
-    member='person'
-)
-async def getPoints(ctx, member: discord.Member):
-    points = userdb.getMemberPoints(ctx.guild, member)
-    await ctx.reply(embed=getInformationEmbed(f"{member.display_name}'s Kontostand", f"*{member.display_name}* hat **{points} Euro**"), ephemeral=True)
-    logger.info(f'{ctx.author.display_name} requested points of {member.display_name}')
 
+
+
+#################################
+#   POINT MANAGEMENT COMMANDS   #
+#################################
+
+
+@bot.hybrid_group(name='geld', description='zeigt den kontostand von jemanden an', fallback='kontostand')
+async def getPoints(ctx):
+    points = userdb.getMemberPoints(ctx.guild, ctx.author)
+    await ctx.reply(embed=getInformationEmbed(f"{ctx.author.display_name}'s Kontostand", f"*{ctx.author.display_name}* hat **{points} Euro**"), ephemeral=True)
+    logger.info(f'{ctx.author.display_name} viewed their points')
+
+
+###########################
+#   PREDICTION COMMANDS   #
+###########################
 
 
 @bot.hybrid_group(name='vorhersage', description='starte eine neue vorhersage', fallback='erstellen')
@@ -157,10 +167,10 @@ async def getPoints(ctx, member: discord.Member):
     endtime='dauer'
 )
 async def startPrediction(ctx, title: str, option1: str, option2: str, endtime: int):
-    # if len(current_predictions.keys()) >=0:
-    #     if current_predictions[ctx.channel.id].result is None:
-    #         await ctx.reply(embed=getErrorEmbed('Es gibt bereits eine laufende Vorhersage in diesem Kanal!'), ephemeral=True)
-    #         return
+    if len(current_predictions.keys()) > 0 and current_predictions[ctx.channel.id] is not None:
+        if current_predictions[ctx.channel.id].result is None:
+            await ctx.reply(embed=getErrorEmbed('Es gibt bereits eine laufende Vorhersage in diesem Kanal!'), ephemeral=True)
+            return
 
     if endtime <= 0:
         end_time = None
@@ -248,6 +258,15 @@ async def setPredictionResult(ctx, option: int):
     await prediction.message.edit(embed=embed)
     await ctx.send(embed=getSuccessEmbed('Ergebnis festgelegt'), ephemeral=True)
 
+@startPrediction.command(name='abbrechen', description='Bricht die aktuelle vorhersage ab und löscht sie')
+async def removePrediction(ctx):
+    current_predictions[ctx.channel.id].message.delete()
+    current_predictions[ctx.channel.id] = None
+    await ctx.reply(embed=getSuccessEmbed('Vorhersage entfernt'), ephemeral=True)
+
+######################
+#   ADMIN COMMANDS   #
+######################
 
 @bot.command()
 async def setPoints(ctx, member: discord.Member, points: int):
@@ -264,6 +283,14 @@ async def manualInitialisation(ctx):
     logger.info('manual guild initialisation')
     initGuild(ctx.guild)
     await ctx.send(embed=getSuccessEmbed('initialised guild'))
+
+#############
+#   OTHER   #
+#############
+
+@bot.hybrid_command(name='echo', description='der bot sagt was du willst')
+async def echo(interaction: discord.Interaction, message):
+    await interaction.reply(message)
 
 @tasks.loop(seconds=5)
 async def checkPredictions():

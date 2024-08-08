@@ -3,13 +3,13 @@
 # 
 
 
+import asyncio
 import datetime
 import logging
 
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
-
 from embeds import getErrorEmbed, getHelpEmbed, getInformationEmbed, getSuccessEmbed
 from prediction import Prediction
 from userdb import UserDB
@@ -25,6 +25,7 @@ intents.members = True
 current_predictions: dict[Prediction] = {}
 
 bot = commands.Bot(command_prefix='$', intents=intents)
+
 
 
 ###############
@@ -292,6 +293,7 @@ async def removePrediction(ctx):
 
 
 @bot.command()
+@commands.is_owner()
 async def setPoints(ctx, member: discord.Member, points: int):
     if ctx.author.id == 533275317276770324:
         userdb.setMemberPoints(ctx.guild, member, points)
@@ -300,6 +302,31 @@ async def setPoints(ctx, member: discord.Member, points: int):
     else:
         await ctx.send(embed=getErrorEmbed('Du hast nicht die Berechtigung, diesen Befehl auszufuehren!'), ephemeral=True)
         logger.info(f'{ctx.author.display_name} tried to use the setPoints command')
+
+@bot.command()
+@commands.is_owner()
+async def quitBot(ctx):
+    app_info = await bot.application_info()
+    if app_info.name == 'VorhersagenBot':
+        message = await ctx.send('Willst du den Bot wirklich stoppen?')
+        
+        def check(reaction, user):
+            return user == ctx.author and str(reaction.emoji) == '💀'
+        
+        try:
+            reaction, user = await bot.wait_for('reaction_add', timeout=15.0, check=check)
+        except asyncio.TimeoutError:
+            await message.edit(content='abgebrochen')
+            logger.info('cancelled shutdown')
+            return
+        else:
+            logger.info('really confirmed shutdown')
+
+    await ctx.send('Tschaudi Arabien :wave:')
+    userdb.saveDb()
+    await bot.close()
+    logger.info('bot exited, goodbye :wave:')
+    exit(0)
 
 @bot.command()
 async def manualInitialisation(ctx):
@@ -315,10 +342,12 @@ async def manualInitialisation(ctx):
 
 @bot.hybrid_command(name='echo', description='🦜🦜🦜')
 async def echo(interaction: discord.Interaction, message):
+    logger.info('ran echo')
     await interaction.reply(message)
 
 @bot.hybrid_command(name='hilfe', description='hilfe? was passiert hier?!? hallo? was soll das?! ich hab angst :(. mama, kannst du mich abholen?')
 async def printHelp(ctx):
+    logger.info(f'showing help to {ctx.author.display_name}')
     await ctx.reply(embeds=getHelpEmbed(), ephemeral=True)
 
 @tasks.loop(seconds=5)

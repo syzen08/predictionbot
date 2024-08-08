@@ -1,5 +1,6 @@
 import json
 import logging
+from datetime import date, timedelta
 from pathlib import Path
 
 import discord
@@ -39,7 +40,7 @@ class UserDB():
 
     def addMember(self, guild: discord.Guild, member: discord.Member):
         if member not in self.db[str(guild.id)]:
-            self.db[str(guild.id)][member.id] = {'points': 500}
+            self.db[str(guild.id)][member.id] = {'points': 500, 'last_claim': date.isoformat(date.today() - timedelta(days=1))}
             self.logger.info(f'created new member {member.id} ({member.display_name}) in guild {guild.id} ({guild.name}) in db')
             self.saveDb()
 
@@ -64,3 +65,11 @@ class UserDB():
         self.logger.debug(f'removed {points} points from {member.id} ({member.display_name}). current points: {self.db[str(guild.id)][str(member.id)]['points']}')
         self.saveDb()
         return True
+    
+    def setLastClaimDate(self, guild: discord.Guild, member: discord.Member, date: str):
+        self.db[str(guild.id)][str(member.id)]['last_claim'] = date
+        self.logger.debug(f'set {member.id} ({member.display_name}) last_claim to {date}')
+        self.saveDb()
+
+    def getLastClaimDate(self, guild: discord.Guild, member: discord.Member) -> date:
+        return date.fromisoformat(self.db[str(guild.id)][str(member.id)]['last_claim'])

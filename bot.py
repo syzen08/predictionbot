@@ -1,5 +1,4 @@
-# TODO: hartz 4 (500)
-# geld geben
+# TODO: 
 # status aendern   
 # 
 
@@ -11,7 +10,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
-from embeds import getErrorEmbed, getInformationEmbed, getSuccessEmbed
+from embeds import getErrorEmbed, getHelpEmbed, getInformationEmbed, getSuccessEmbed
 from prediction import Prediction
 from userdb import UserDB
 
@@ -27,9 +26,11 @@ current_predictions: dict[Prediction] = {}
 
 bot = commands.Bot(command_prefix='$', intents=intents)
 
+
 ###############
 #   CLASSES   #
 ###############
+
 
 class PredictionSubmitModal(discord.ui.Modal, title='Wie viel Euro willst du wetten?'):
     amount = discord.ui.TextInput(label='! Du kannst nur ein mal wetten !', placeholder='z.B. 100', required=True, style=discord.TextStyle.short, max_length=6)
@@ -74,7 +75,7 @@ class PredictionView(discord.ui.View):
             await interaction.response.send_modal(PredictionSubmitModal(self.predictionchannel, 1))
             logger.info(f'{interaction.user.display_name} selected option 1')
 
-    @discord.ui.button(label='Option 2', style=discord.ButtonStyle.red)
+    @discord.ui.button(label='Option 2', style=discord.ButtonStyle.blurple)
     async def option2(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self.validateIfUserVoted(interaction, interaction.user):
             await interaction.response.send_modal(PredictionSubmitModal(self.predictionchannel, 2))
@@ -105,9 +106,11 @@ class ClosePredictionView(discord.ui.View):
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(embed=getSuccessEmbed('Vorhersage wurde nicht geschlossen'), ephemeral=True)
 
+
 ##############
 #   EVENTS   #
 ##############
+
 
 @bot.event
 async def on_ready():
@@ -122,7 +125,7 @@ async def on_ready():
     logger.info('started checkPredictions loop')
 
     try:
-        await bot.change_presence(status=discord.Status.online, activity=discord.CustomActivity(name="ich sehe alles"))
+        await bot.change_presence(status=discord.Status.online, activity=discord.Activity(name='euch beim Schlafen zu', type=discord.ActivityType.watching))
         logger.info("set custom presence")
     except Exception as e:
         logger.error(e)
@@ -133,19 +136,37 @@ async def on_guild_join(guild):
     initGuild(guild)
 
 
-
-
-
 #################################
 #   POINT MANAGEMENT COMMANDS   #
 #################################
 
 
-@bot.hybrid_group(name='geld', description='zeigt den kontostand von jemanden an', fallback='kontostand')
-async def getPoints(ctx):
+@bot.hybrid_group(name='geld', description='Zeigt dir deinen Kontostand an', fallback='kontostand')
+async def points(ctx):
     points = userdb.getMemberPoints(ctx.guild, ctx.author)
     await ctx.reply(embed=getInformationEmbed(f"{ctx.author.display_name}'s Kontostand", f"*{ctx.author.display_name}* hat **{points} Euro**"), ephemeral=True)
     logger.info(f'{ctx.author.display_name} viewed their points')
+
+@points.command(name='überweise', description='Überweise jemanden ein wenig Asche, für schwere Zeiten')
+async def givePoints(ctx, member: discord.Member, amount: int):
+    if userdb.removePoints(ctx.guild, ctx.author, amount):
+        userdb.addPoints(ctx.guild, member, amount)
+        await ctx.reply(embed=getSuccessEmbed(f"Du hast {member.display_name} **{amount} Euro** überwiesen. Dein Kontostand beträgt jetzt **{userdb.getMemberPoints(ctx.guild, ctx.author)} Euro.**"), ephemeral=True)
+        await member.send(f'*Psst...* **{ctx.author.display_name}** hat dir **{amount} Euro** geschickt!\nDu hast jetzt **{userdb.getMemberPoints(ctx.guild, member)} Euro.** Mach keinen Quatsch damit.')
+        logger.info(f'{ctx.author.display_name} gave {amount} points to {member.display_name}')
+    else:
+        await ctx.reply(embed=getErrorEmbed(f"Du hast nicht genug Geld! \nDein aktueller Kontostand betraegt **{userdb.getMemberPoints(ctx.guild, ctx.author)} Euro** "), ephemeral=True)
+
+@points.command(name='hartz4', description='Hol dir dein tägliches Geldpaket (500 Euro)')
+async def claimDailyPoints(ctx):
+    last_claim = userdb.getLastClaimDate(ctx.guild, ctx.author)
+    if last_claim is None or last_claim == datetime.date.today() - datetime.timedelta(days=1):
+        userdb.setLastClaimDate(ctx.guild, ctx.author, datetime.date.today().isoformat())
+        userdb.addPoints(ctx.guild, ctx.author, 500)
+        await ctx.reply(embed=getSuccessEmbed(f'Du hast dein Hartz IV erhalten. Dein Kontostand beträgt jetzt **{userdb.getMemberPoints(ctx.guild, ctx.author)} Euro.**'))
+        logger.info(f'{ctx.author.display_name} claimed their daily points')
+    else:
+        await ctx.reply(embed=getErrorEmbed(f'Werd mal nicht gierig hier, {ctx.author.display_name}. Komm morgen wieder, dann kriegst du auch wieder was.'))
 
 
 ###########################
@@ -153,12 +174,12 @@ async def getPoints(ctx):
 ###########################
 
 
-@bot.hybrid_group(name='vorhersage', description='starte eine neue vorhersage', fallback='erstellen')
+@bot.hybrid_group(name='vorhersage', description='Starte eine neue Vorhersage', fallback='erstellen')
 @app_commands.describe(
     title='Titel der Vorhersage',
     option1='Option 1',
     option2='Option 2',
-    endtime='Dauer der Vorhersage in Sekunden. Bei 0 muss sie mit /vorhersage schliessen geschlossen werdern'
+    endtime='Dauer der Vorhersage in Sekunden. Bei 0 muss sie mit /vorhersage schliessen manuell geschlossen werden'
 )
 @app_commands.rename(
     title='titel', 
@@ -190,7 +211,7 @@ async def startPrediction(ctx, title: str, option1: str, option2: str, endtime: 
     prediction = Prediction(title, option1, option2, end_time, ctx.channel, prediction_message)
     current_predictions[ctx.channel.id] = prediction
 
-@startPrediction.command(name='schliessen', description='schliesst die laufende vorhersage im kanal')
+@startPrediction.command(name='schliessen', description='Schliesst die laufende Vorhersage')
 async def closePrediction(ctx):
     try:
         prediction = current_predictions[ctx.channel.id]
@@ -258,15 +279,17 @@ async def setPredictionResult(ctx, option: int):
     await prediction.message.edit(embed=embed)
     await ctx.send(embed=getSuccessEmbed('Ergebnis festgelegt'), ephemeral=True)
 
-@startPrediction.command(name='abbrechen', description='Bricht die aktuelle vorhersage ab und löscht sie')
+@startPrediction.command(name='abbrechen', description='Bricht die aktuelle Vorhersage ab und löscht sie. !!!GELD GEHT VERLOREN!!!') # TODO: repay users after deletion
 async def removePrediction(ctx):
-    current_predictions[ctx.channel.id].message.delete()
+    await current_predictions[ctx.channel.id].message.delete()
     current_predictions[ctx.channel.id] = None
     await ctx.reply(embed=getSuccessEmbed('Vorhersage entfernt'), ephemeral=True)
+
 
 ######################
 #   ADMIN COMMANDS   #
 ######################
+
 
 @bot.command()
 async def setPoints(ctx, member: discord.Member, points: int):
@@ -284,18 +307,27 @@ async def manualInitialisation(ctx):
     initGuild(ctx.guild)
     await ctx.send(embed=getSuccessEmbed('initialised guild'))
 
+
 #############
 #   OTHER   #
 #############
 
-@bot.hybrid_command(name='echo', description='der bot sagt was du willst')
+
+@bot.hybrid_command(name='echo', description='🦜🦜🦜')
 async def echo(interaction: discord.Interaction, message):
     await interaction.reply(message)
+
+@bot.hybrid_command(name='hilfe', description='hilfe? was passiert hier?!? hallo? was soll das?! ich hab angst :(. mama, kannst du mich abholen?')
+async def printHelp(ctx):
+    await ctx.reply(embeds=getHelpEmbed(), ephemeral=True)
 
 @tasks.loop(seconds=5)
 async def checkPredictions():
     logger.debug('checking predictions')
     for prediction in current_predictions.values():
+        if prediction is None:
+            continue
+
         if not prediction.open:
             continue
 

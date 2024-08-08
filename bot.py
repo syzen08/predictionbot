@@ -166,7 +166,7 @@ async def claimDailyPoints(ctx):
         await ctx.reply(embed=getSuccessEmbed(f'Du hast dein Hartz IV erhalten. Dein Kontostand beträgt jetzt **{userdb.getMemberPoints(ctx.guild, ctx.author)} Euro.**'), ephemeral=True)
         logger.info(f'{ctx.author.display_name} claimed their daily points')
     else:
-        await ctx.reply(embed=getErrorEmbed(f'Werd mal nicht gierig hier, {ctx.author.display_name}. Komm morgen wieder, dann kriegst du auch wieder was.'))
+        await ctx.reply(embed=getErrorEmbed(f'Werd mal nicht gierig hier, {ctx.author.display_name}. Komm morgen wieder, dann kriegst du auch wieder was.'), ephemeral=True)
 
 
 ###########################

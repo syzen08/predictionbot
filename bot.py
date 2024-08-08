@@ -16,7 +16,7 @@ from userdb import UserDB
 
 logger = logging.getLogger('bot')
 
-userdb = UserDB('users.json')
+userdb = UserDB('db/users.json')
 
 intents = discord.Intents.default()
 intents.message_content = True

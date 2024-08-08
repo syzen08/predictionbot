@@ -1,0 +1,7 @@
+services:
+  prediction-bot:
+    build: .
+    container_name: prediction-discord-bot
+    volumes:
+      - ./db:/app/db
+      - ./logs:/app/logs

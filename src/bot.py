@@ -6,6 +6,8 @@
 import asyncio
 import datetime
 import logging
+import random
+import sys
 
 import discord
 from discord import app_commands
@@ -136,6 +138,12 @@ async def on_guild_join(guild):
     logger.info(f'joined new guild {guild.id} ({guild.name})')
     initGuild(guild)
 
+
+@bot.event
+async def on_command_error(ctx: commands.Context, error):
+    logger.error(f'exception raised executing {ctx.command.name}! error: {error}', exc_info=error)
+    logger.error(f'detailed information: author: {ctx.author.display_name}, guild: {ctx.guild.name}, args: {ctx.args}')
+    await ctx.reply(embed=getErrorEmbed(f'Irgendas ist schiefgelaufen!\nGenauer Fehler: \n`{error}`'), ephemeral=True)
 
 #################################
 #   POINT MANAGEMENT COMMANDS   #
@@ -277,7 +285,11 @@ async def setPredictionResult(ctx, option: int):
                 embed.set_field_at(1, name=f"🎉 **{prediction.option1} | {prediction.getPercentage(2)}%**", value=f"{prediction.option2_amout} Euro\n**{totalpoints}** werden an {len(prediction.option2_voters)} Mitglieder verteilt")
                 logger.info(f'a price pool of {totalpoints} is split for {len(prediction.option2_voters)} voters, each member gets {pointshare} points')
     
-    await prediction.message.edit(embed=embed)
+    try:
+        await prediction.message.edit(embed=embed)
+    except discord.errors.HTTPException as e:
+        logger.warning(f'failed to edit prediction messag ({e}), sending new message')
+        await prediction.channel.send(embed=embed)
     await ctx.send(embed=getSuccessEmbed('Ergebnis festgelegt'), ephemeral=True)
 
 @startPrediction.command(name='abbrechen', description='Bricht die aktuelle Vorhersage ab und löscht sie. !!!GELD GEHT VERLOREN!!!') # TODO: repay users after deletion
@@ -287,9 +299,9 @@ async def removePrediction(ctx):
     await ctx.reply(embed=getSuccessEmbed('Vorhersage entfernt'), ephemeral=True)
 
 
-######################
-#   ADMIN COMMANDS   #
-######################
+############################
+#   ADMIN/DEBUG COMMANDS   #
+############################
 
 
 @bot.command()
@@ -334,6 +346,22 @@ async def manualInitialisation(ctx):
     initGuild(ctx.guild)
     await ctx.send(embed=getSuccessEmbed('initialised guild'))
 
+@bot.command()
+async def causeException(ctx):
+    logger.warning('triggering manual exception')
+    randint = random.randint(0, 3)
+    match randint:
+        case 0:
+            raise Exception('test exception')
+        case 1:
+            x = 12 / 0
+            x
+        case 2:
+            x = [1, 2]
+            x[3]
+        case 3:
+            x = {}
+            x['a']
 
 #############
 #   OTHER   #

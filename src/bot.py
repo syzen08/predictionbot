@@ -12,6 +12,7 @@ import sys
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
+
 from embeds import getErrorEmbed, getHelpEmbed, getInformationEmbed, getSuccessEmbed
 from prediction import Prediction
 from userdb import UserDB
@@ -128,7 +129,7 @@ async def on_ready():
     logger.info('started checkPredictions loop')
 
     try:
-        await bot.change_presence(status=discord.Status.online, activity=discord.Activity(name='euch beim Schlafen zu', type=discord.ActivityType.watching))
+        await bot.change_presence(status=discord.Status.online, activity=discord.Activity(name='blehh!!', type=discord.ActivityType.playing))
         logger.info("set custom presence")
     except Exception as e:
         logger.error(e)
@@ -169,7 +170,7 @@ async def givePoints(ctx, member: discord.Member, amount: int):
 @points.command(name='hartz4', description='Hol dir dein tägliches Geldpaket (500 Euro)')
 async def claimDailyPoints(ctx):
     last_claim = userdb.getLastClaimDate(ctx.guild, ctx.author)
-    if last_claim is None or last_claim == datetime.date.today() - datetime.timedelta(days=1):
+    if last_claim is None or datetime.date.today() - last_claim > datetime.timedelta(days=1):
         userdb.setLastClaimDate(ctx.guild, ctx.author, datetime.date.today().isoformat())
         userdb.addPoints(ctx.guild, ctx.author, 500)
         await ctx.reply(embed=getSuccessEmbed(f'Du hast dein Hartz IV erhalten. Dein Kontostand beträgt jetzt **{userdb.getMemberPoints(ctx.guild, ctx.author)} Euro.**'), ephemeral=True)
@@ -347,6 +348,7 @@ async def manualInitialisation(ctx):
     await ctx.send(embed=getSuccessEmbed('initialised guild'))
 
 @bot.command()
+@commands.is_owner()
 async def causeException(ctx):
     logger.warning('triggering manual exception')
     randint = random.randint(0, 3)
